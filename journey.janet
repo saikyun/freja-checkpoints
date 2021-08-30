@@ -12,18 +12,143 @@
   (let [{:hours hours
          :minutes minutes
          :seconds seconds} (os/date)]
-    (string/format "%02d_%02d_%02d.janet" hours minutes seconds)))
+    (string/format "%02d_%02d_%02d" hours minutes seconds)))
+
+(varfn path->journey-dir
+  [path]
+  (let [parts (path/parts (path/abspath path))
+        freja-data-dir (string (os/getenv "HOME") "/.local/share/freja/journeys")
+        journey-dir (string
+                      freja-data-dir
+                      (string/join [;(array/slice parts 0 -2)
+                                    (string ".freja-journey-" (last parts))] path/sep))]
+    journey-dir))
 
 (varfn save-journey
-  [path]
-  (let [journey-dir (string ".freja-journey-" path)
+  [path note]
+  (let [journey-dir (path->journey-dir path)
         day-dir (string journey-dir path/sep (journey-date))
-        journey-path (string day-dir path/sep (journey-time))]
-    (os/mkdir journey-dir)
-    (os/mkdir day-dir)
+        journey-path (string day-dir path/sep (journey-time) " " note)]
+    (reduce (fn [acc cur]
+              (if-not acc
+                cur
+                (let [new (string acc path/sep cur)]
+                  (os/mkdir new)
+                  new)))
+            nil
+            (string/split path/sep day-dir))
     (with [f (file/open journey-path :w)]
       (with [org-f (file/open path :r)]
-        (file/write f (file/read org-f :all))))))
+        (file/write f (file/read org-f :all))))
+
+    (print "saved journey: " journey-path)))
+
+(varfn list-backups
+  [path]
+  (let [journey-dir (path->journey-dir path)]
+    (var days-times @[])
+    (loop [dir :in (os/dir journey-dir)
+           :let [full-dir (string journey-dir path/sep dir)]]
+      (array/push days-times [dir
+                              (seq [file :in (os/dir full-dir)]
+                                (string full-dir path/sep file))]))
+    days-times))
+
+(comment
+  (use freja/state)
+  (->
+    (get-in editor-state [:left-state :editor :gb :path])
+    list-backups)
+  #
+)
+
+
+# TODO: click to go back in time
+# also make checkpoint at current point in time
+
+(use freja/state)
+(import freja/events :as e)
+(import freja/theme)
+(import freja/file-handling :as fh)
+(import freja/render_new_gap_buffer :as rgb)
+
+(comment
+  (keys (get-in editor-state [:left-state :editor :gb]))
+  #
+)
+
+(varfn format-filename
+  [filename]
+  (def peg
+    ~{:time (/ (* ':d ':d "_")
+               ,(fn [d1 d2] (string d1 d2 ":")))
+      :main (* :time :time ':d ':d '(any 1))})
+  (string ;(peg/match peg filename)))
+
+(comment
+  (format-filename "15_56_56 ueoh")
+
+  #
+)
+
+(varfn show-backups
+  [props]
+  (def {:path path
+        :textarea textarea
+        :selected selected} props)
+
+  (let [backups (or (-?> path list-backups) [])]
+    [:background {:color (theme/colors :background)}
+     [:padding {:all 6}
+      [:block {}
+       [:padding {:bottom 6}
+        [:block {}
+         [:clickable {:on-click (fn [_] (e/put! editor-state :right nil))}
+                    "Close"]]
+        [:text {:text "Checkpoints"
+                :size 28}]]]
+      [:block {}
+       [:padding {:bottom 12}
+        [:text {:text (string
+                        "Click on checkpoints below to restore earlier versions of: "
+                        (path/abspath path))
+                :size 18}]]]
+      ;(seq [[day times] :in (reverse (sort-by first backups))]
+         [:padding {:bottom 12}
+          [:block {}
+           [:text {:size 22
+                   :text (string day)}]
+           ;(seq [fullpath :in (reverse (sort times))]
+              [:clickable {:on-click
+                           (fn [_]
+                             (when (props :needs-save)
+                               (save-journey path "before moving to checkpoint")
+                               (:put props :needs-save false))
+                             (fh/load-file textarea
+                                           fullpath)
+                             (put-in textarea [:gb :path] path)
+                             (:put props :selected fullpath)
+                             (print fullpath))}
+               [:block {}
+                [:background {:color (when (= selected fullpath)
+                                       (theme/colors :text))}
+                 [:text {:size 18
+                         :color (when (= selected fullpath)
+                                  (theme/colors :background))
+                         :text (format-filename (path/basename fullpath))}]]]])]])]]))
+
+(defn show-checkpoints
+  []
+  (def backup-props
+    @{:path (get-in editor-state [:left-state :editor :gb :path])
+      :textarea (get-in editor-state [:left-state :editor])
+      :needs-save true})
+
+  (e/put! editor-state :right (fn [props]
+                                (put backup-props :put (fn [self k v]
+                                                         (e/put! props :force-refresh true)
+                                                         (put self k v)))
+                                [:block {} [show-backups backup-props]])))
 
 (varfn swap-journey
   [path]
@@ -46,7 +171,8 @@
             ([err fib]
               (file/write f content))))))))
 
-(save-journey "journey.janet")
+#(save-journey "journey.janet")
+#(list-backups "journey.janet")
 #(overwrite-journey "journey.janet")
 #(swap-journey "journey.janet")
 

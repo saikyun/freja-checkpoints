@@ -1,3 +1,5 @@
+# TODO: don't crash when there are no checkpoints
+
 (import spork/path)
 
 (varfn journey-date
@@ -54,7 +56,9 @@
                                 (string full-dir path/sep file))]))
     days-times))
 
+
 (comment
+
   (use freja/state)
   (->
     (get-in editor-state [:left-state :editor :gb :path])
@@ -97,58 +101,73 @@
         :textarea textarea
         :selected selected} props)
 
-  (let [backups (or (-?> path list-backups) [])]
-    [:background {:color (theme/colors :background)}
-     [:padding {:all 6}
+  [:background {:color (theme/colors :background)}
+   [:padding {:all 6}
+    [:block {}
+     [:padding {:bottom 6}
       [:block {}
-       [:padding {:bottom 6}
+       [:clickable {:on-click (fn [_] (e/put! editor-state :right nil))}
+        "Close"]]
+      [:text {:text "Checkpoints"
+              :size 28}]]]
+
+    (try
+      (let [backups (or (-?> path list-backups) [])]
         [:block {}
-         [:clickable {:on-click (fn [_] (e/put! editor-state :right nil))}
-                    "Close"]]
-        [:text {:text "Checkpoints"
-                :size 28}]]]
-      [:block {}
-       [:padding {:bottom 12}
-        [:text {:text (string
-                        "Click on checkpoints below to restore earlier versions of: "
-                        (path/abspath path))
-                :size 18}]]]
-      ;(seq [[day times] :in (reverse (sort-by first backups))]
-         [:padding {:bottom 12}
-          [:block {}
-           [:text {:size 22
-                   :text (string day)}]
-           ;(seq [fullpath :in (reverse (sort times))]
-              [:clickable {:on-click
-                           (fn [_]
-                             (when (props :needs-save)
-                               (save-journey path "before moving to checkpoint")
-                               (:put props :needs-save false))
-                             (fh/load-file textarea
-                                           fullpath)
-                             (put-in textarea [:gb :path] path)
-                             (:put props :selected fullpath)
-                             (print fullpath))}
-               [:block {}
-                [:background {:color (when (= selected fullpath)
-                                       (theme/colors :text))}
-                 [:text {:size 18
-                         :color (when (= selected fullpath)
-                                  (theme/colors :background))
-                         :text (format-filename (path/basename fullpath))}]]]])]])]]))
+         [:block {}
+          [:padding {:bottom 12}
+           [:text {:text (string
+                           "Click on checkpoints below to restore earlier versions of:\n"
+                           (path/abspath path))
+                   :size 18}]]]
+         ;(seq [[day times] :in (reverse (sort-by first backups))]
+            [:padding {:bottom 12}
+             [:block {}
+              [:text {:size 22
+                      :text (string day)}]
+              ;(seq [fullpath :in (reverse (sort times))]
+                 [:clickable {:on-click
+                              (fn [_]
+                                (when (props :needs-save)
+                                  (save-journey path "before moving to checkpoint")
+                                  (:put props :needs-save false))
+                                (fh/load-file textarea
+                                              fullpath)
+                                (put-in textarea [:gb :path] path)
+                                (:put props :selected fullpath)
+                                (print fullpath))}
+                  [:block {}
+                   [:background {:color (when (= selected fullpath)
+                                          (theme/colors :text))}
+                    [:text {:size 18
+                            :color (when (= selected fullpath)
+                                     (theme/colors :background))
+                            :text (format-filename (path/basename fullpath))}]]]])]])])
+      ([err fib]
+        err))]])
 
-(defn show-checkpoints
+(defn backup-component
+  [props]
+  (unless (props :backup-props)
+    (let [backup-props
+          @{:path (get-in editor-state [:left-state :editor :gb :path])
+            :textarea (get-in editor-state [:left-state :editor])
+            :needs-save true}]
+
+      (put backup-props :put
+           (fn [self k v]
+             (e/update! props :backup-props put k v)))
+
+      (put props :backup-props backup-props)))
+
+  [:block {} [show-backups (props :backup-props)]])
+
+(varfn show-checkpoints
   []
-  (def backup-props
-    @{:path (get-in editor-state [:left-state :editor :gb :path])
-      :textarea (get-in editor-state [:left-state :editor])
-      :needs-save true})
-
-  (e/put! editor-state :right (fn [props]
-                                (put backup-props :put (fn [self k v]
-                                                         (e/put! props :force-refresh true)
-                                                         (put self k v)))
-                                [:block {} [show-backups backup-props]])))
+  (if-not (= (editor-state :right) backup-component)
+    (e/put! editor-state :right backup-component)
+    (do (put editor-state :backup-props nil)
+      (e/put! editor-state :right nil))))
 
 (varfn swap-journey
   [path]

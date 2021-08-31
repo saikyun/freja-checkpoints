@@ -144,7 +144,10 @@
                                      (theme/colors :background))
                             :text (format-filename (path/basename fullpath))}]]]])]])])
       ([err fib]
-        err))]])
+        (if (and (string? err)
+                 (peg/find "cannot open directory" err))
+          (string err "\n\nthis might be due to no checkpoints existing")
+          err)))]])
 
 (defn backup-component
   [props]

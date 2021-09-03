@@ -28,9 +28,13 @@
 
 (varfn save-journey
   [path note]
-  (let [journey-dir (path->journey-dir path)
+  # only allow characters that are OK in a path
+  # TODO: remove more non-ok characters
+  (let [note (string/replace-all "/" "_SLASH_" note)
+        journey-dir (path->journey-dir path)
         day-dir (string journey-dir path/sep (journey-date))
         journey-path (string day-dir path/sep (journey-time) " " note)]
+
     (reduce (fn [acc cur]
               (if-not acc
                 cur
@@ -39,9 +43,16 @@
                   new)))
             nil
             (string/split path/sep day-dir))
-    (with [f (file/open journey-path :w)]
-      (with [org-f (file/open path :r)]
-        (file/write f (file/read org-f :all))))
+
+    (with [f (file/open (tracev journey-path) :wn)]
+      (print "opnede")
+      (with [org-f (file/open path :rn)]
+        (print "gun write")
+        (def content (file/read org-f :all))
+        (print "content opened")
+        (file/write (tracev f) (tracev content))
+        (print "wrote"))
+      (print "close 1"))
 
     (print "saved journey: " journey-path)))
 

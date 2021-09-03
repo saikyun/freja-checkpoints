@@ -2,38 +2,38 @@
 
 (import spork/path)
 
-(varfn journey-date
+(varfn checkpoint-date
   []
   (let [{:year year
          :month month
          :month-day month-day} (os/date)]
     (string/format "%04d-%02d-%02d" year month month-day)))
 
-(varfn journey-time
+(varfn checkpoint-time
   []
   (let [{:hours hours
          :minutes minutes
          :seconds seconds} (os/date)]
     (string/format "%02d_%02d_%02d" hours minutes seconds)))
 
-(varfn path->journey-dir
+(varfn path->checkpoint-dir
   [path]
   (let [parts (path/parts (path/abspath path))
-        freja-data-dir (string (os/getenv "HOME") "/.local/share/freja/journeys")
-        journey-dir (string
+        freja-data-dir (string (os/getenv "HOME") "/.local/share/freja/checkpoints")
+        checkpoint-dir (string
                       freja-data-dir
                       (string/join [;(array/slice parts 0 -2)
-                                    (string ".freja-journey-" (last parts))] path/sep))]
-    journey-dir))
+                                    (string ".freja-checkpoint-" (last parts))] path/sep))]
+    checkpoint-dir))
 
-(varfn save-journey
+(varfn save-checkpoint
   [path note]
   # only allow characters that are OK in a path
   # TODO: remove more non-ok characters
   (let [note (string/replace-all "/" "_SLASH_" note)
-        journey-dir (path->journey-dir path)
-        day-dir (string journey-dir path/sep (journey-date))
-        journey-path (string day-dir path/sep (journey-time) " " note)]
+        checkpoint-dir (path->checkpoint-dir path)
+        day-dir (string checkpoint-dir path/sep (checkpoint-date))
+        checkpoint-path (string day-dir path/sep (checkpoint-time) " " note)]
 
     (reduce (fn [acc cur]
               (if-not acc
@@ -44,24 +44,19 @@
             nil
             (string/split path/sep day-dir))
 
-    (with [f (file/open (tracev journey-path) :wn)]
-      (print "opnede")
+    (with [f (file/open checkpoint-path :wn)]
       (with [org-f (file/open path :rn)]
-        (print "gun write")
         (def content (file/read org-f :all))
-        (print "content opened")
-        (file/write (tracev f) (tracev content))
-        (print "wrote"))
-      (print "close 1"))
+        (file/write f content)))
 
-    (print "saved journey: " journey-path)))
+    (print "saved checkpoint: " checkpoint-path)))
 
-(varfn list-backups
+(varfn list-checkpoints
   [path]
-  (let [journey-dir (path->journey-dir path)]
+  (let [checkpoint-dir (path->checkpoint-dir path)]
     (var days-times @[])
-    (loop [dir :in (os/dir journey-dir)
-           :let [full-dir (string journey-dir path/sep dir)]]
+    (loop [dir :in (os/dir checkpoint-dir)
+           :let [full-dir (string checkpoint-dir path/sep dir)]]
       (array/push days-times [dir
                               (seq [file :in (os/dir full-dir)]
                                 (string full-dir path/sep file))]))
@@ -73,7 +68,7 @@
   (use freja/state)
   (->
     (get-in editor-state [:left-state :editor :gb :path])
-    list-backups)
+    list-checkpoints)
   #
 )
 
@@ -106,7 +101,7 @@
   #
 )
 
-(varfn show-backups
+(varfn checkpoint-list
   [props]
   (def {:path path
         :textarea textarea
@@ -123,7 +118,7 @@
               :size 28}]]]
 
     (try
-      (let [backups (or (-?> path list-backups) [])]
+      (let [checkpoints (or (-?> path list-checkpoints) [])]
         [:block {}
          [:block {}
           [:padding {:bottom 12}
@@ -131,7 +126,7 @@
                            "Click on checkpoints below to restore earlier versions of:\n"
                            (path/abspath path))
                    :size 18}]]]
-         ;(seq [[day times] :in (reverse (sort-by first backups))]
+         ;(seq [[day times] :in (reverse (sort-by first checkpoints))]
             [:padding {:bottom 12}
              [:block {}
               [:text {:size 22
@@ -140,7 +135,7 @@
                  [:clickable {:on-click
                               (fn [_]
                                 (when (props :needs-save)
-                                  (save-journey path "before moving to checkpoint")
+                                  (save-checkpoint path "before moving to checkpoint")
                                   (:put props :needs-save false))
                                 (fh/load-file textarea
                                               fullpath)
@@ -160,62 +155,29 @@
           (string err "\n\nthis might be due to no checkpoints existing")
           err)))]])
 
-(defn backup-component
+(defn checkpoint-component
   [props]
-  (unless (props :backup-props)
-    (let [backup-props
+  (unless (props :checkpoint-props)
+    (let [checkpoint-props
           @{:path (get-in editor-state [:left-state :editor :gb :path])
             :textarea (get-in editor-state [:left-state :editor])
             :needs-save true}]
 
-      (put backup-props :put
+      (put checkpoint-props :put
            (fn [self k v]
-             (e/update! props :backup-props put k v)))
+             (e/update! props :checkpoint-props put k v)))
 
-      (put props :backup-props backup-props)))
+      (put props :checkpoint-props checkpoint-props)))
 
-  [:block {} [show-backups (props :backup-props)]])
+  [:block {} [checkpoint-list (props :checkpoint-props)]])
 
 (varfn show-checkpoints
   []
-  (if-not (= (editor-state :right) backup-component)
-    (e/put! editor-state :right backup-component)
-    (do (put editor-state :backup-props nil)
+  (if-not (= (editor-state :right) checkpoint-component)
+    (e/put! editor-state :right checkpoint-component)
+    (do (put editor-state :checkpoint-props nil)
       (e/put! editor-state :right nil))))
 
-(varfn swap-journey
-  [path]
-  (let [journey-path (string ".freja-journey-" path)]
-    (if-not (os/stat journey-path)
-      (print "there is no journey " journey-path " for " path)
-      (do
-        (def content (slurp path))
-        (def journey-content (slurp journey-path))
-
-        # trying to restore content if something gets messed up
-        (with [f (file/open path :w)]
-          (try (do
-                 (file/write f journey-content)
-                 (with [journey (file/open journey-path :w)]
-                   (try
-                     (file/write journey content)
-                     ([err fib]
-                       (file/write journey journey-content)))))
-            ([err fib]
-              (file/write f content))))))))
-
-#(save-journey "journey.janet")
-#(list-backups "journey.janet")
-#(overwrite-journey "journey.janet")
-#(swap-journey "journey.janet")
-
-
-(comment
-  # next steps:
-  # 0. when opening file, save-new-journey
-  # 1. c-s -> overwrite-journey
-  # 2. c-e -> "regular save"
-  # 3. "revert" -> swap-journey and refresh gap buffer
-
-  #
-)
+#(save-checkpoint "checkpoint.janet")
+#(list-checkpoints "checkpoint.janet")
+#(overwrite-checkpoint "checkpoint.janet")
